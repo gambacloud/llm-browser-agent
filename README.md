@@ -1,16 +1,30 @@
-# LLM Browser Agent 🤖
+# 🤖 Multi-Agent Browser Command Center
 
-**TL;DR:** An autonomous Chrome extension powered by LLMs (Gemini). It uses your active browser sessions to navigate, click, and type to complete tasks you give it in plain text. Runs 100% locally.
+**TL;DR:** An autonomous Chrome extension powered by LLMs (Local or Cloud). It uses your active browser sessions to navigate, click, and type to complete tasks you give it in plain text. Runs entirely from a central Dispatch Dashboard.
 
-## 🛠️ How to Install (No Coding Required)
-1. **Download the Code:** Click the green **"Code"** button at the top of this GitHub page and select **"Download ZIP"**.
-2. **Extract the Folder:** Unzip the downloaded file to a permanent location on your computer (e.g., your Documents folder). 
-3. **Open Chrome Extensions:** Open Google Chrome and type `chrome://extensions/` in the URL bar.
-4. **Enable Developer Mode:** Turn **ON** the "Developer mode" toggle switch in the top right corner.
-5. **Load the Agent:** Click the **"Load unpacked"** button in the top left corner, and select the *extracted folder* from step 2.
+## 🚀 1-Minute Quickstart (Demo Setup)
 
-## 🚀 How to Use
-1. **Pin it:** Click the puzzle icon 🧩 in Chrome and pin the Agent to your toolbar.
-2. **Add API Key:** Click the extension, paste your Google Gemini API Key, and save.
-3. **Give a Command:** Go to any webpage, open the extension, and type your goal (e.g., *"Click the login button and type my email"*).
-4. **Watch it Work:** The agent will inject a UI banner, scan the page, move the virtual cursor 🖱️, and execute the actions autonomously. Use the 🛑 **STOP** button in the banner if it goes off track.
+### 1. Install the Extension
+1. Clone or download this repository to your machine.
+2. Open Chrome and navigate to `chrome://extensions/`.
+3. Toggle **Developer Mode** ON (top right).
+4. Click **Load unpacked** (top left) and select the repository folder.
+
+### 2. Get the "Brain" (Ultra-Fast Cloud LLM)
+For the fastest live demos, we use Groq (Llama-3 70B):
+1. Go to [console.groq.com](https://console.groq.com/) and log in.
+2. Navigate to **API Keys** -> **Create API Key**.
+3. Copy the key (starts with `gsk_`).
+
+### 3. Dispatch Agents
+1. Pin the extension 🧩 to your Chrome toolbar.
+2. Click the extension icon and select **🎛️ Open Dashboard**.
+3. In the Command Center, select **Groq Cloud** as the Brain and paste your API key.
+4. Enter a Target URL (e.g., `https://wikipedia.org`).
+5. Enter a Goal (e.g., `"Search for artificial intelligence and click the first result. Once clicked, return done."`).
+6. Click **🚀 Dispatch** and watch the agent open a new tab and execute the task autonomously!
+
+## ⚙️ Supported Providers
+* **Groq (Llama-3.3-70B):** Lightning-fast cloud execution (Recommended for demos).
+* **Local Ollama (Qwen2.5-Coder / Llama-3):** 100% free and private local execution. Requires Ollama installed and running (`ollama run qwen2.5-coder:7b`).
+* **Google Gemini (Flash 2.5):** Reliable cloud fallback.

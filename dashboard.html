@@ -29,23 +29,28 @@
             <div>
                 <label><strong>Brain:</strong></label>
                 <select id="llmProvider">
+                    <option value="groq">Groq Cloud (Ultra Fast Llama-3)</option>
                     <option value="ollama">Local Ollama (Free/Unlimited)</option>
                     <option value="gemini">Google Gemini (Cloud)</option>
                 </select>
             </div>
             
             <div id="geminiConfig" style="display: none;">
-                <label><strong>API Key:</strong></label>
-                <input type="password" id="apiKey" placeholder="Gemini API Key..." style="width: 250px;">
+                <label><strong>Gemini Key:</strong></label>
+                <input type="password" id="apiKey" placeholder="AI Studio Key..." style="width: 200px;">
             </div>
 
-            <div id="ollamaConfig" style="display: flex; align-items: center; gap: 10px;">
+            <div id="groqConfig" style="display: flex; align-items: center; gap: 10px;">
+                <label><strong>Groq Key:</strong></label>
+                <input type="password" id="groqApiKey" placeholder="gsk_..." style="width: 250px;">
+            </div>
+
+            <div id="ollamaConfig" style="display: none; align-items: center; gap: 10px;">
                 <label><strong>URL:</strong></label>
                 <input type="text" id="ollamaUrl" value="http://localhost:11434" style="width: 180px;">
-                <span id="ollamaStatus" style="font-size: 13px; font-weight: bold; background: white; padding: 4px 8px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">⚪ Checking...</span>
-                
+                <span id="ollamaStatus" style="font-size: 13px; font-weight: bold; background: white; padding: 4px 8px; border-radius: 4px;">⚪ Checking...</span>
                 <label style="margin-left: 10px;"><strong>Model:</strong></label>
-                <input type="text" id="ollamaModel" value="qwen2.5-coder:7b" style="width: 150px;">
+                <input type="text" id="ollamaModel" value="qwen2.5-coder:3b" style="width: 120px;">
             </div>
         </div>
 

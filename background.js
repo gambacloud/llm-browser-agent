@@ -11,8 +11,24 @@ async function callLLMAPI(tabId, userPrompt, domElements, actionHistory, config)
         ? `\n\nPast actions you already executed in this session:\n- ${actionHistory.join('\n- ')}\nDO NOT repeat these actions unless specifically required.` 
         : '';
         
-    const systemPrompt = "You are a strict browser automation agent. Respond ONLY with a raw, valid JSON object.";
-    const userMessage = `Goal: "${userPrompt}"\n\nCurrent DOM:\n${JSON.stringify(domElements)}${historyString}\n\nDetermine the SINGLE NEXT ACTION.\nRespond using this exact schema:\n{"action": "click" | "type" | "navigate" | "done", "target_id": <number or null>, "value": "<text to type, OR full URL if action is navigate>"}`;
+    const systemPrompt = "You are a highly precise autonomous browser agent. Respond ONLY with a raw JSON object. Do not wrap in markdown (no ```json).";
+    // Engineered rules to enforce exact behavior
+    const userMessage = `GOAL: "${userPrompt}"
+
+    CURRENT DOM:
+    ${JSON.stringify(domElements)}
+    ${historyString}
+
+    RULES:
+    1. Determine the exact NEXT SINGLE ACTION required to progress towards the goal.
+    2. If the Goal is already completely achieved, you MUST return {"action": "done"}.
+    3. Valid actions: "click", "type", "navigate", "done".
+    4. For DROPDOWNS (select tags): Use the "type" action and provide the exact hidden 'value' string mapped to the desired option. Do not type the visual text.
+    5. Do not repeat actions from the history unless a previous attempt failed and a different value is needed.
+
+    Respond strictly in this JSON format:
+    {"action": "click" | "type" | "navigate" | "done", "target_id": <number or null>, "value": "<text to type OR URL>"}`;
+
 
     // --- OLLAMA LOCAL EXECUTION ---
     if (config.provider === 'ollama') {
@@ -49,6 +65,47 @@ async function callLLMAPI(tabId, userPrompt, domElements, actionHistory, config)
             throw new Error("Ollama returned invalid JSON structure.");
         }
     } 
+
+    // --- GROQ CLOUD EXECUTION (Lightning Fast Llama-3 70B) ---
+    else if (config.provider === 'groq') {
+        const payload = {
+            model: "llama-3.3-70b-versatile", // Currently Groq's smartest/fastest model
+            response_format: { type: "json_object" }, // Native JSON forcing
+            messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: userMessage }
+            ]
+        };
+
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${config.groqApiKey}`
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(`Groq API Error: ${errData.error?.message || response.status}`);
+        }
+        
+        const data = await response.json();
+        let rawText = data.choices[0].message.content;
+        
+        // Sometimes models wrap JSON in markdown even with json_object enabled
+        rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+        
+        try {
+            return {
+                decision: JSON.parse(rawText),
+                tokensUsed: data.usage ? data.usage.total_tokens : 0
+            };
+        } catch (e) {
+            throw new Error("Groq returned invalid JSON structure.");
+        }
+    }
     
     // --- GOOGLE GEMINI CLOUD EXECUTION ---
     else if (config.provider === 'gemini') {

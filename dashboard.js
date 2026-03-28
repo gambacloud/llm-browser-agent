@@ -78,18 +78,43 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    const groqConfig = document.getElementById('groqConfig');
+    const groqApiKeyInput = document.getElementById('groqApiKey');
+
     // Toggle Config UI
     llmProvider.addEventListener('change', (e) => {
-        if (e.target.value === 'gemini') {
-            geminiConfig.style.display = 'block';
-            ollamaConfig.style.display = 'none';
-        } else {
-            geminiConfig.style.display = 'none';
+        geminiConfig.style.display = 'none';
+        ollamaConfig.style.display = 'none';
+        groqConfig.style.display = 'none';
+
+        if (e.target.value === 'gemini') geminiConfig.style.display = 'block';
+        else if (e.target.value === 'ollama') {
             ollamaConfig.style.display = 'flex';
             checkOllamaStatus();
         }
+        else if (e.target.value === 'groq') groqConfig.style.display = 'flex';
+        
         chrome.storage.local.set({ llmProvider: e.target.value });
     });
+
+    // Load saved settings
+    chrome.storage.local.get(['apiKey', 'groqApiKey', 'llmProvider', 'ollamaModel', 'ollamaUrl'], (result) => {
+        if (result.apiKey) apiKeyInput.value = result.apiKey;
+        if (result.groqApiKey) groqApiKeyInput.value = result.groqApiKey;
+        if (result.ollamaModel) ollamaModelInput.value = result.ollamaModel;
+        if (result.ollamaUrl) ollamaUrlInput.value = result.ollamaUrl;
+        
+        if (result.llmProvider) {
+            llmProvider.value = result.llmProvider;
+            llmProvider.dispatchEvent(new Event('change'));
+        } else {
+            llmProvider.value = 'groq'; // Default to Groq for the demo
+            llmProvider.dispatchEvent(new Event('change'));
+        }
+    });
+
+    // Save Groq key on blur
+    groqApiKeyInput.addEventListener('blur', () => chrome.storage.local.set({ groqApiKey: groqApiKeyInput.value.trim() }));
 
     // Re-check Ollama if URL changes manually
     ollamaUrlInput.addEventListener('blur', checkOllamaStatus);
@@ -121,6 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const config = {
             provider: llmProvider.value,
             apiKey: apiKeyInput.value.trim(),
+            groqApiKey: groqApiKeyInput.value.trim(), // <--- הוספת את זה?
             ollamaUrl: ollamaUrlInput.value.trim(),
             ollamaModel: ollamaModelInput.value.trim()
         };
