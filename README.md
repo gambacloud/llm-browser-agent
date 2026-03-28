@@ -26,4 +26,8 @@ An autonomous browser extension that uses LLMs (Language Models) to navigate, cl
 3. Navigate to any web page where you want the agent to operate.
 4. Open the extension and type your goal in the text box (e.g., *"Click on the login button and type myemail@example.com into the email field"*).
 5. Click **"🚀 Execute Action"**.
+<<<<<<< HEAD
 6. Watch the agent attach visual ID badges to elements and physically interact with the page.
+=======
+6. Watch the agent attach visual ID badges to elements and physically interact with the page.
+>>>>>>> ebe02b059f09331ea17ce3c5048322a175267bc6
