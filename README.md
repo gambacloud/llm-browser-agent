@@ -1,33 +1,16 @@
-# LLM Browser Agent
+# LLM Browser Agent 🤖
 
-An autonomous browser extension that uses LLMs (Language Models) to navigate, click, and type directly within your active Chrome tabs. It operates securely in the local context of the browser, utilizing existing sessions and cookies without requiring complex backend setups or external server automation.
+**TL;DR:** An autonomous Chrome extension powered by LLMs (Gemini). It uses your active browser sessions to navigate, click, and type to complete tasks you give it in plain text. Runs 100% locally.
 
-## Features
-* **Zero-Setup Context:** Runs entirely as a Chrome Extension (Manifest V3). If you are logged into a site, the agent is logged in.
-* **Token Efficiency:** Extracts only interactive DOM elements (buttons, inputs, links) to minimize LLM token usage and prevent hallucination.
-* **Agentic Loop:** Analyzes the page, makes a decision, executes the physical action (click/type), waits for the page to react, and repeats until the goal is achieved.
-* **Local Secrets:** API keys are stored securely in `chrome.storage.local`.
+## 🛠️ How to Install (No Coding Required)
+1. **Download the Code:** Click the green **"Code"** button at the top of this GitHub page and select **"Download ZIP"**.
+2. **Extract the Folder:** Unzip the downloaded file to a permanent location on your computer (e.g., your Documents folder). 
+3. **Open Chrome Extensions:** Open Google Chrome and type `chrome://extensions/` in the URL bar.
+4. **Enable Developer Mode:** Turn **ON** the "Developer mode" toggle switch in the top right corner.
+5. **Load the Agent:** Click the **"Load unpacked"** button in the top left corner, and select the *extracted folder* from step 2.
 
-## Prerequisites
-* Google Chrome browser.
-* A valid API Key for Google Gemini (Tested with `gemini-2.5-flash`).
-
-## Installation
-1. Clone or download this repository to your local machine.
-2. Open Google Chrome and navigate to `chrome://extensions/`.
-3. Enable **"Developer mode"** using the toggle switch in the top right corner.
-4. Click the **"Load unpacked"** button in the top left.
-5. Select the folder containing this project (`llm-browser-agent`).
-6. The extension will appear in your list. Pin it to your toolbar for easy access.
-
-## Usage
-1. Click the extension icon in your Chrome toolbar.
-2. In the setup section, paste your LLM API Key and click **"Save"**.
-3. Navigate to any web page where you want the agent to operate.
-4. Open the extension and type your goal in the text box (e.g., *"Click on the login button and type myemail@example.com into the email field"*).
-5. Click **"🚀 Execute Action"**.
-<<<<<<< HEAD
-6. Watch the agent attach visual ID badges to elements and physically interact with the page.
-=======
-6. Watch the agent attach visual ID badges to elements and physically interact with the page.
->>>>>>> ebe02b059f09331ea17ce3c5048322a175267bc6
+## 🚀 How to Use
+1. **Pin it:** Click the puzzle icon 🧩 in Chrome and pin the Agent to your toolbar.
+2. **Add API Key:** Click the extension, paste your Google Gemini API Key, and save.
+3. **Give a Command:** Go to any webpage, open the extension, and type your goal (e.g., *"Click the login button and type my email"*).
+4. **Watch it Work:** The agent will inject a UI banner, scan the page, move the virtual cursor 🖱️, and execute the actions autonomously. Use the 🛑 **STOP** button in the banner if it goes off track.
