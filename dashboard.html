@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Agent Command Center</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background-color: #f8fafc; margin: 0; padding: 40px; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        h1 { margin-top: 0; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        input[type="text"], input[type="password"], select { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
+        button { padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.2s; }
+        button:hover { background: #059669; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #e2e8f0; }
+        th { background-color: #f1f5f9; color: #475569; }
+        .status-running { color: #d97706; font-weight: bold; }
+        .status-failed { color: #ef4444; font-weight: bold; }
+        .config-panel { background: #f1f5f9; padding: 15px; border-radius: 6px; margin-bottom: 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+        .history-pill { background: #e2e8f0; color: #334155; border: none; padding: 6px 12px; border-radius: 20px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+        .history-pill:hover { background: #cbd5e1; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎛️ Multi-Agent Command Center</h1>
+        
+        <div class="config-panel">
+            <div>
+                <label><strong>Brain:</strong></label>
+                <select id="llmProvider">
+                    <option value="ollama">Local Ollama (Free/Unlimited)</option>
+                    <option value="gemini">Google Gemini (Cloud)</option>
+                </select>
+            </div>
+            
+            <div id="geminiConfig" style="display: none;">
+                <label><strong>API Key:</strong></label>
+                <input type="password" id="apiKey" placeholder="Gemini API Key..." style="width: 250px;">
+            </div>
+
+            <div id="ollamaConfig" style="display: flex; align-items: center; gap: 10px;">
+                <label><strong>URL:</strong></label>
+                <input type="text" id="ollamaUrl" value="http://localhost:11434" style="width: 180px;">
+                <span id="ollamaStatus" style="font-size: 13px; font-weight: bold; background: white; padding: 4px 8px; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">⚪ Checking...</span>
+                
+                <label style="margin-left: 10px;"><strong>Model:</strong></label>
+                <input type="text" id="ollamaModel" value="qwen2.5-coder:7b" style="width: 150px;">
+            </div>
+        </div>
+
+        <div id="historyContainer" style="margin-bottom: 15px; display: none;">
+            <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">🕒 Recent Runs (Click to reload):</div>
+            <div id="historyTags" style="display: flex; gap: 10px; flex-wrap: wrap;"></div>
+        </div>
+
+        <h3>Launch New Agent</h3>
+        <div class="input-group">
+            <input type="text" id="targetUrl" placeholder="Target URL (e.g., https://wikipedia.org)" style="flex-grow: 1;">
+            <input type="text" id="agentPrompt" placeholder="Goal (e.g., Search for Israel)" style="flex-grow: 2;">
+            <button id="dispatchBtn">🚀 Dispatch</button>
+        </div>
+
+        <h3>Active Agents</h3>
+        <table id="agentsTable">
+            <thead>
+                <tr>
+                    <th>Tab ID</th>
+                    <th>Target URL</th>
+                    <th>Goal</th>
+                    <th>Provider</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <script src="dashboard.js"></script>
+</body>
+</html>
