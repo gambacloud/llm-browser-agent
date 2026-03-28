@@ -1,4 +1,5 @@
 // content.js
+
 console.log("[Agent] Content script injected.");
 
 let agentCursor = null;
@@ -7,12 +8,11 @@ let bannerState = 'normal';
 
 function injectAgentUI() {
     if (document.getElementById('llm-agent-wrapper')) return;
-
     const wrapper = document.createElement('div');
     wrapper.id = 'llm-agent-wrapper';
     Object.assign(wrapper.style, {
         position: 'fixed', top: '10px', left: '50%', transform: 'translateX(-50%)',
-        width: '600px', maxWidth: '90%', zIndex: '2147483647',
+        width: '650px', maxWidth: '95%', zIndex: '2147483647',
         fontFamily: 'system-ui, sans-serif', transition: 'all 0.3s ease',
         boxShadow: '0 4px 12px rgba(0,0,0,0.15)', borderRadius: '8px', overflow: 'hidden',
         backgroundColor: 'rgba(255, 255, 255, 0.98)', border: '1px solid #e2e8f0'
@@ -30,6 +30,7 @@ function injectAgentUI() {
             <div id="llm-stats-container" style="display: flex; gap: 15px; font-size: 12px; color: #475569;">
                 <div>🔍 <span id="agent-stat-searched">Waiting...</span></div>
                 <div>⚡ <span id="agent-stat-tried">-</span></div>
+                <div style="color:#d97706; font-weight:bold;">🪙 <span id="agent-stat-tokens">0</span></div>
                 <div>👀 <span id="agent-stat-saw">-</span></div>
             </div>
             <div style="display: flex; gap: 5px; align-items: center;">
@@ -62,14 +63,60 @@ function injectAgentUI() {
     });
     document.body.appendChild(agentCursor);
 
+    // Button Listeners
     document.getElementById('btn-stop').addEventListener('click', () => {
         updateBannerStat('saw', 'Stopping...', 'User requested emergency stop.');
         chrome.runtime.sendMessage({ action: 'stop_agent' });
     });
-    
     document.getElementById('btn-minimize').addEventListener('click', () => setBannerState('minimized'));
     document.getElementById('btn-normal').addEventListener('click', () => setBannerState('normal'));
     document.getElementById('btn-expand').addEventListener('click', () => setBannerState('expanded'));
+
+    // --- NEW: Event Delegation for the Copy to Clipboard buttons ---
+    logContainer.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('agent-copy-btn')) {
+            const btn = e.target;
+            const dataUrl = btn.getAttribute('data-img');
+            const originalText = btn.innerText;
+            
+            try {
+                btn.innerText = '⏳ Copying...';
+                
+                // Chrome Clipboard API requires a PNG blob. We must draw the JPEG onto a Canvas to convert it.
+                const img = new Image();
+                img.src = dataUrl;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    
+                    canvas.toBlob(async (blob) => {
+                        try {
+                            await navigator.clipboard.write([
+                                new ClipboardItem({ 'image/png': blob })
+                            ]);
+                            btn.innerText = '✅ Copied!';
+                            btn.style.backgroundColor = '#10b981';
+                            btn.style.color = 'white';
+                        } catch (err) {
+                            btn.innerText = '❌ Failed';
+                            console.error("Clipboard write failed:", err);
+                        }
+                        setTimeout(() => {
+                            btn.innerText = originalText;
+                            btn.style.backgroundColor = 'rgba(255,255,255,0.9)';
+                            btn.style.color = '#334155';
+                        }, 2000);
+                    }, 'image/png');
+                };
+            } catch (err) {
+                console.error(err);
+                btn.innerText = '❌ Error';
+            }
+        }
+    });
 }
 
 function setBannerState(state) {
@@ -85,38 +132,44 @@ function setBannerState(state) {
     document.getElementById('btn-expand').style.display = 'inline-block';
 
     if (state === 'minimized') {
-        wrapper.style.width = 'auto';
-        statsContainer.style.display = 'none';
-        titleText.style.display = 'none';
-        logs.style.height = '0px'; logs.style.padding = '0px 15px';
-        headerInner.style.borderBottom = 'none';
+        wrapper.style.width = 'auto'; statsContainer.style.display = 'none'; titleText.style.display = 'none';
+        logs.style.height = '0px'; logs.style.padding = '0px 15px'; headerInner.style.borderBottom = 'none';
         document.getElementById('btn-minimize').style.display = 'none';
     } else if (state === 'normal') {
-        wrapper.style.width = '600px';
-        statsContainer.style.display = 'flex';
-        titleText.style.display = 'inline';
-        logs.style.height = '0px'; logs.style.padding = '0px 15px';
-        headerInner.style.borderBottom = 'none';
+        wrapper.style.width = '650px'; statsContainer.style.display = 'flex'; titleText.style.display = 'inline';
+        logs.style.height = '0px'; logs.style.padding = '0px 15px'; headerInner.style.borderBottom = 'none';
         document.getElementById('btn-normal').style.display = 'none';
     } else if (state === 'expanded') {
-        wrapper.style.width = '600px';
-        statsContainer.style.display = 'flex';
-        titleText.style.display = 'inline';
-        logs.style.height = '150px'; logs.style.padding = '10px 15px';
-        headerInner.style.borderBottom = '1px solid #e2e8f0';
+        wrapper.style.width = '650px'; statsContainer.style.display = 'flex'; titleText.style.display = 'inline';
+        logs.style.height = '300px'; logs.style.padding = '10px 15px'; headerInner.style.borderBottom = '1px solid #e2e8f0';
         document.getElementById('btn-expand').style.display = 'none';
     }
 }
 
-function updateBannerStat(statName, text, logMessage = null) {
+function updateBannerStat(statName, text, logMessage = null, screenshotUrl = null) {
     const el = document.getElementById(`agent-stat-${statName}`);
     if (el) el.innerText = text;
+    
     if (logMessage) {
         const logContainer = document.getElementById('llm-banner-logs');
         if (logContainer) {
             const entry = document.createElement('div');
-            entry.style.marginBottom = '6px';
-            entry.innerHTML = `<span style="color:#94a3b8;">[${new Date().toLocaleTimeString()}]</span> ${logMessage}`;
+            entry.style.marginBottom = '12px';
+            entry.style.paddingBottom = '8px';
+            entry.style.borderBottom = '1px solid #e2e8f0';
+            
+            let contentHtml = `<span style="color:#94a3b8;">[${new Date().toLocaleTimeString()}]</span> <b>${logMessage}</b>`;
+            
+            if (screenshotUrl) {
+                // NEW: Added a relative wrapper and the Copy button over the image
+                contentHtml += `
+                <div style="position: relative; display: inline-block; margin-top: 8px;">
+                    <img src="${screenshotUrl}" style="max-width: 250px; max-height: 150px; border-radius: 4px; border: 1px solid #cbd5e1; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <button class="agent-copy-btn" data-img="${screenshotUrl}" style="position: absolute; top: 5px; right: 5px; background: rgba(255,255,255,0.9); border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; color: #334155; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: all 0.2s;">📋 Copy</button>
+                </div>`;
+            }
+            
+            entry.innerHTML = contentHtml;
             logContainer.prepend(entry); 
         }
     }
@@ -144,7 +197,14 @@ function extractInteractiveElements() {
         const id = elementCounter++;
         el.setAttribute('data-agent-id', id);
 
-        let textContext = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ? (el.placeholder || el.value || el.name || '') : (el.innerText?.trim() || el.getAttribute('aria-label') || el.title || '');
+        let textContext = '';
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+            const baseName = el.placeholder || el.name || el.type || 'input field';
+            textContext = el.value ? `${baseName} (Current value: ${el.value})` : baseName;
+        } else {
+            textContext = el.innerText?.trim() || el.getAttribute('aria-label') || el.title || '';
+        }
+        
         textContext = textContext.substring(0, 100).replace(/\s+/g, ' ');
 
         simplifiedDom.push({ id, tagName: el.tagName.toLowerCase(), type: el.type || '', text: textContext });
@@ -179,7 +239,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             try {
                 if (request.type === 'click') targetEl.click();
                 else if (request.type === 'type') {
-                    targetEl.focus(); targetEl.value = request.value;
+                    targetEl.focus(); 
+                    targetEl.value = request.value;
                     targetEl.dispatchEvent(new Event('input', { bubbles: true }));
                     targetEl.dispatchEvent(new Event('change', { bubbles: true }));
                 }
@@ -189,7 +250,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true; 
     }
     else if (request.action === 'update_status') {
-        updateBannerStat(request.statName, request.text, request.logMessage);
+        updateBannerStat(request.statName, request.text, request.logMessage, request.screenshotUrl);
         sendResponse({ success: true });
     }
 });
