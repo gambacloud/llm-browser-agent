@@ -162,7 +162,7 @@ function animateCursorTo(element) {
     agentCursor.style.left = `${rect.left + window.scrollX + (rect.width / 2) - 12}px`;
 }
 
-const INTERACTIVE_SELECTORS = ['button', 'a[href]', 'input:not([type="hidden"])', 'select', 'textarea', '[role="button"]', '[role="link"]', '[tabindex]:not([tabindex="-1"])'];
+// const INTERACTIVE_SELECTORS = ['button', 'a[href]', 'input:not([type="hidden"])', 'select', 'textarea', '[role="button"]', '[role="link"]', '[tabindex]:not([tabindex="-1"])'];
 
 function extractInteractiveElements() {
     const rawElements = document.querySelectorAll(INTERACTIVE_SELECTORS.join(', '));
@@ -238,3 +238,96 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: true });
     }
 });
+
+// --- NEW: Deep Shadow DOM query function ---
+function querySelectorAllDeep(selector, root = document) {
+    const results = Array.from(root.querySelectorAll(selector));
+    
+    // Create a TreeWalker to find all elements that might have a shadowRoot
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let node;
+    while ((node = walker.nextNode())) {
+        if (node.shadowRoot) {
+            results.push(...querySelectorAllDeep(selector, node.shadowRoot));
+        }
+    }
+    return results;
+}
+
+// Expanded selectors to catch Salesforce menus and custom roles
+const INTERACTIVE_SELECTORS = [
+    'button', 'a[href]', 'input:not([type="hidden"])', 'select', 'textarea', 
+    '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="tab"]', 
+    '[role="combobox"]', '[tabindex]:not([tabindex="-1"])'
+];
+
+function extractInteractiveElements() {
+    // 1. Clean up old badges
+    document.querySelectorAll('.agent-id-cleanup').forEach(el => el.remove());
+
+    // 2. Find elements piercing through Shadow DOMs
+    const rawElements = querySelectorAllDeep(INTERACTIVE_SELECTORS.join(', '));
+    const simplifiedDom = [];
+    let elementCounter = 0;
+
+    rawElements.forEach((el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        
+        // 3. Robust Visibility Check (Salesforce often hides things off-screen or with opacity 0)
+        if (
+            style.display === 'none' || 
+            style.visibility === 'hidden' || 
+            style.opacity === '0' ||
+            rect.width === 0 || 
+            rect.height === 0 ||
+            rect.top < -100 // Hidden way scrolled up
+        ) return;
+
+        const id = elementCounter++;
+        el.setAttribute('data-agent-id', id);
+
+        // 4. Advanced Text Extraction (Prioritize Accessibility tags used by Salesforce)
+        let textContext = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+        
+        if (!textContext) {
+            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                const baseName = el.placeholder || el.name || el.type || 'input field';
+                textContext = el.value ? `${baseName} (Current value: ${el.value})` : baseName;
+            } else if (el.tagName === 'SELECT') {
+                const options = Array.from(el.options).map(opt => `'${opt.text}' (value: '${opt.value}')`).join(', ');
+                textContext = `Dropdown Options: [${options}] | Current Selection: '${el.value}'`;
+            } else {
+                // Get inner text, but avoid massive blobs if it's a huge container
+                textContext = el.innerText?.trim() || el.textContent?.trim() || '';
+            }
+        }
+        
+        // Clean up text
+        textContext = textContext.substring(0, 150).replace(/\s+/g, ' ');
+
+        // If we still have no text, and it's not a recognizable input, it might be a useless icon. Skip.
+        if (!textContext && el.tagName !== 'INPUT') return;
+
+        simplifiedDom.push({ 
+            id, 
+            tagName: el.tagName.toLowerCase(), 
+            role: el.getAttribute('role') || el.type || '', 
+            text: textContext 
+        });
+        
+        // 5. Draw the Badge
+        const badge = document.createElement('div');
+        badge.className = 'agent-id-badge agent-id-cleanup';
+        badge.innerText = id;
+        Object.assign(badge.style, {
+            position: 'absolute', backgroundColor: '#ff4757', color: 'white', fontSize: '10px',
+            fontFamily: 'monospace', fontWeight: 'bold', padding: '1px 3px', borderRadius: '3px',
+            zIndex: '2147483646', pointerEvents: 'none', 
+            top: `${rect.top + window.scrollY}px`, left: `${rect.left + window.scrollX}px`
+        });
+        document.body.appendChild(badge);
+    });
+    
+    return simplifiedDom;
+}
