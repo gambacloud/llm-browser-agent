@@ -151,6 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>
                     <button style="background: #ef4444; padding: 5px 10px; font-size: 11px; cursor: pointer; border: none; border-radius: 4px; color: white;" onclick="stopAgent(${newTab.id})">STOP</button>
                     <button style="background: #3b82f6; padding: 5px 10px; font-size: 11px; cursor: pointer; border: none; border-radius: 4px; color: white;" onclick="focusTab(${newTab.id})">VIEW</button>
+                    <button style="background: #6366f1; padding: 5px 10px; font-size: 11px; cursor: pointer; border: none; border-radius: 4px; color: white;" onclick="showLog(${newTab.id})">📋 LOG</button>
                 </td>
             `;
             agentsTable.appendChild(row);
@@ -177,6 +178,51 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     window.focusTab = (tabId) => chrome.tabs.update(tabId, { active: true });
+
+    window.showLog = (tabId) => {
+        chrome.runtime.sendMessage({ action: 'get_audit_log', tabId }, (res) => {
+            if (!res || !res.log) return alert('No audit log yet for this agent. Run it first.');
+            const blob = new Blob([buildLogHTML(res.log)], { type: 'text/html' });
+            chrome.tabs.create({ url: URL.createObjectURL(blob) });
+        });
+    };
+
+    function buildLogHTML(log) {
+        const duration = log.endTime ? ((log.endTime - log.startTime) / 1000).toFixed(1) : '?';
+        const outcomeColor = { done: '#10b981', error: '#ef4444', stopped: '#f59e0b', max_iterations: '#f59e0b' }[log.outcome] || '#64748b';
+        const outcomeIcon  = { done: '✓', error: '✗', stopped: '⏹', max_iterations: '⚠' }[log.outcome] || '?';
+
+        const steps = log.steps.map((s, idx) => `
+            <div style="margin-bottom:16px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+                <div style="background:#f8fafc;padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e2e8f0;">
+                    <span style="background:#3b82f6;color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">${idx + 1}</span>
+                    <span style="font-weight:600;color:#0f172a;">${s.action}</span>
+                    ${s.value ? `<span style="color:#64748b;font-size:12px;">→ "${s.value}"</span>` : ''}
+                    <span style="margin-left:auto;color:#94a3b8;font-size:11px;">${new Date(s.ts).toLocaleTimeString()}</span>
+                </div>
+                ${s.screenshot
+                    ? `<img src="${s.screenshot}" style="width:100%;display:block;">`
+                    : '<div style="padding:10px;color:#94a3b8;font-size:12px;">No screenshot</div>'}
+            </div>`).join('');
+
+        return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Agent Log</title>
+            <style>body{font-family:system-ui,sans-serif;background:#f8fafc;margin:0;padding:30px;}
+            .wrap{max-width:820px;margin:0 auto;background:#fff;padding:24px;border-radius:12px;box-shadow:0 4px 6px rgba(0,0,0,.06);}
+            h2{margin-top:0;color:#0f172a;} .meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;background:#f1f5f9;padding:14px;border-radius:8px;margin-bottom:20px;}
+            .meta-item .label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em;} .meta-item b{display:block;margin-top:2px;}</style>
+            </head><body><div class="wrap">
+            <h2>📋 Agent Audit Log</h2>
+            <div class="meta">
+                <div class="meta-item"><span class="label">Goal</span><b>${log.goal}</b></div>
+                <div class="meta-item"><span class="label">Outcome</span><b style="color:${outcomeColor}">${outcomeIcon} ${(log.outcome || '').toUpperCase()}</b></div>
+                <div class="meta-item"><span class="label">Provider</span><b>${(log.provider || '').toUpperCase()}</b></div>
+                <div class="meta-item"><span class="label">Duration / Tokens</span><b>${duration}s / ${(log.totalTokens || 0).toLocaleString()} tkn</b></div>
+            </div>
+            <h3 style="color:#475569;">${log.steps.length} Steps</h3>
+            ${steps}
+            ${log.error ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px;color:#dc2626;margin-top:16px;"><b>Error:</b> ${log.error}</div>` : ''}
+            </div></body></html>`;
+    }
 
     // --- Live status updates from the running agent loop ---
     const STATUS_COLORS = {

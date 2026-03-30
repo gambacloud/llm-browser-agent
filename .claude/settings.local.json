@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /c/Users/idane/Downloads/llm-browser-agent/.claude/worktrees/condescending-keller/*.js)"
+    ]
+  }
+}

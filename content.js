@@ -272,17 +272,15 @@ function extractInteractiveElements() {
         }
         
         // Clean up text
-        textContext = textContext.substring(0, 150).replace(/\s+/g, ' ');
+        textContext = textContext.substring(0, 80).replace(/\s+/g, ' ');
 
         // If we still have no text, and it's not a form field, it might be a useless icon. Skip.
         if (!textContext && !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
 
-        simplifiedDom.push({ 
-            id, 
-            tagName: el.tagName.toLowerCase(), 
-            role: el.getAttribute('role') || el.type || '', 
-            text: textContext 
-        });
+        const entry = { i: id, t: el.tagName.toLowerCase(), x: textContext };
+        const r = el.getAttribute('role') || el.type || '';
+        if (r) entry.r = r;
+        simplifiedDom.push(entry);
         
         // 5. Draw the Badge
         const badge = document.createElement('div');
@@ -300,7 +298,7 @@ function extractInteractiveElements() {
     // PERF: deduplicate elements with identical tag+text to cut LLM token usage
     const seen = new Set();
     return simplifiedDom.filter(el => {
-        const key = `${el.tagName}:${el.text.substring(0, 40)}`;
+        const key = `${el.t}:${el.x.substring(0, 40)}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
