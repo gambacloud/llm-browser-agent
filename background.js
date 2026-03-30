@@ -23,9 +23,9 @@ async function callLLMAPI(tabId, userPrompt, domElements, actionHistory, config)
     1. Determine the exact NEXT SINGLE ACTION required to progress towards the goal.
     2. If the Goal is already completely achieved, you MUST return {"action": "done"}.
     3. Valid actions: "click", "type", "navigate", "done".
-    4. For DROPDOWNS (select tags): Use the "type" action and provide the exact hidden 'value' string mapped to the desired option. Do not type the visual text.
-    5. Do not repeat actions from the history unless a previous attempt failed and a different value is needed.
+    4. For DROPDOWNS (select tags): Use the "type" action with the exact hidden 'value' string, not the display text.
 
+    DOM fields: i=element id, t=tag, r=role/type, x=text.
     Respond strictly in this JSON format:
     {"action": "click" | "type" | "navigate" | "done", "target_id": <number or null>, "value": "<text to type OR URL>"}`;
 
@@ -246,12 +246,20 @@ async function captureAuditScreenshot() {
     } catch (e) { return null; }
 }
 
+// --- AUDIT LOG ---
+async function saveAuditLog(tabId, log) {
+    return new Promise(resolve => {
+        chrome.storage.local.set({ [`audit_${tabId}`]: log }, resolve);
+    });
+}
+
 // --- MAIN LOOP ---
 async function runAgentLoop(tabId, prompt, config) {
     let currentIteration = 1;
     let actionHistory = [];
     let sessionTotalTokens = 0;
     let tasks = null; // task list from planner
+    const auditLog = { goal: prompt, provider: config.provider, startTime: Date.now(), steps: [], outcome: null, totalTokens: 0 };
 
     stopRequests.delete(tabId);
     console.log(`[Background] Starting loop for tab ${tabId} using ${config.provider}`);
@@ -293,10 +301,15 @@ async function runAgentLoop(tabId, prompt, config) {
 
             if (decision.action === 'done') {
                 await sendUIUpdate(tabId, 'saw', '✓ Goal Achieved!', 'Agent concluded task successfully.');
-                // Tick remaining tasks to done
                 if (tasks) tasks.forEach((_, i) => {
                     try { chrome.tabs.sendMessage(tabId, { action: 'tick_task', index: i }); } catch {}
                 });
+                const finalShot = await captureAuditScreenshot();
+                auditLog.steps.push({ step: currentIteration, action: 'DONE', value: null, screenshot: finalShot, ts: Date.now() });
+                auditLog.outcome = 'done';
+                auditLog.totalTokens = sessionTotalTokens;
+                auditLog.endTime = Date.now();
+                await saveAuditLog(tabId, auditLog);
                 return;
             }
 
@@ -314,6 +327,7 @@ async function runAgentLoop(tabId, prompt, config) {
                 actionHistory.push(actionDesc);
                 const screenshotUrl = await captureAuditScreenshot();
                 await sendUIUpdate(tabId, 'tried', `Navigate`, actionDesc, screenshotUrl);
+                auditLog.steps.push({ step: currentIteration, action: actionDesc, value: safeUrl, screenshot: screenshotUrl, ts: Date.now() });
                 chrome.tabs.update(tabId, { url: safeUrl });
                 await sleep(SLEEP_BETWEEN_ACTIONS_MS);
                 currentIteration++;
@@ -322,8 +336,9 @@ async function runAgentLoop(tabId, prompt, config) {
 
             let targetContext = "Unknown Element";
             if (decision.target_id !== null && decision.target_id !== undefined) {
-                const targetEl = domResponse.dom.find(el => el.id === decision.target_id);
-                if (targetEl) targetContext = `[${targetEl.tagName.toUpperCase()}] "${targetEl.text || targetEl.type}"`;
+                const targetEl = domResponse.dom.find(el => el.i === decision.target_id);
+                if (targetEl) targetContext = `[${targetEl.t.toUpperCase()}] "${targetEl.x || targetEl.r || ''}"`;
+
             }
 
             const actionDesc = `${decision.action.toUpperCase()} on ${targetContext}`;
@@ -331,6 +346,7 @@ async function runAgentLoop(tabId, prompt, config) {
 
             const screenshotUrl = await captureAuditScreenshot();
             await sendUIUpdate(tabId, 'tried', decision.action.toUpperCase(), `Executing: ${actionDesc} ${decision.value ? `| Value: "${decision.value}"` : ''}`, screenshotUrl);
+            auditLog.steps.push({ step: currentIteration, action: actionDesc, value: decision.value || null, screenshot: screenshotUrl, ts: Date.now() });
 
             const execResponse = await new Promise(resolve => {
                 chrome.tabs.sendMessage(tabId, { action: 'execute_action', type: decision.action, target_id: decision.target_id, value: decision.value }, resolve);
@@ -349,16 +365,26 @@ async function runAgentLoop(tabId, prompt, config) {
         } catch (error) {
             if (error.message.includes('Stopped by user')) {
                 await sendUIUpdate(tabId, 'saw', '🛑 Stopped', 'Execution aborted manually.');
+                auditLog.outcome = 'stopped';
             } else {
                 await sendUIUpdate(tabId, 'saw', `Error`, `Critical Error: ${error.message}`);
                 console.error(`[Agent Error Tab ${tabId}]`, error);
+                auditLog.outcome = 'error';
+                auditLog.error = error.message;
             }
+            auditLog.totalTokens = sessionTotalTokens;
+            auditLog.endTime = Date.now();
+            await saveAuditLog(tabId, auditLog);
             return;
         }
     }
 
     if (!stopRequests.has(tabId) && currentIteration > MAX_ITERATIONS) {
         await sendUIUpdate(tabId, 'saw', `Max iterations reached`, `Stopped after ${MAX_ITERATIONS} steps.`);
+        auditLog.outcome = 'max_iterations';
+        auditLog.totalTokens = sessionTotalTokens;
+        auditLog.endTime = Date.now();
+        await saveAuditLog(tabId, auditLog);
     }
     stopRequests.delete(tabId);
 }
@@ -376,6 +402,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             console.log(`[Background] Stop requested for tab ID: ${tabIdToStop}`);
         }
         sendResponse({ success: true });
+    } else if (request.action === 'get_audit_log') {
+        chrome.storage.local.get([`audit_${request.tabId}`], (res) => {
+            sendResponse({ log: res[`audit_${request.tabId}`] || null });
+        });
     }
     return true;
 });
