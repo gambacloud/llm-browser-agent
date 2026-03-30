@@ -272,7 +272,7 @@ function extractInteractiveElements() {
         }
         
         // Clean up text
-        textContext = textContext.substring(0, 80).replace(/\s+/g, ' ');
+        textContext = textContext.substring(0, 31).replace(/\s+/g, ' ');
 
         // If we still have no text, and it's not a form field, it might be a useless icon. Skip.
         if (!textContext && !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
