@@ -182,8 +182,10 @@ document.addEventListener('DOMContentLoaded', () => {
     window.showLog = (tabId) => {
         chrome.runtime.sendMessage({ action: 'get_audit_log', tabId }, (res) => {
             if (!res || !res.log) return alert('No audit log yet for this agent. Run it first.');
-            const blob = new Blob([buildLogHTML(res.log)], { type: 'text/html' });
-            chrome.tabs.create({ url: URL.createObjectURL(blob) });
+            const win = window.open('', '_blank');
+            if (!win) return alert('Popup blocked. Please allow popups for this extension.');
+            win.document.write(buildLogHTML(res.log));
+            win.document.close();
         });
     };
 
