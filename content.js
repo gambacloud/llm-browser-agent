@@ -3,154 +3,124 @@
 console.log("[Agent] Content script injected.");
 
 let agentCursor = null;
-let agentBanner = null;
-let bannerState = 'normal'; 
+let _taskCount = 0;    // how many task steps we received
+let _currentTask = 0; // which step is currently active
 
 function injectAgentUI() {
     if (document.getElementById('llm-agent-wrapper')) return;
+
+    // Inject keyframe + task item styles once
+    if (!document.getElementById('llm-agent-styles')) {
+        const style = document.createElement('style');
+        style.id = 'llm-agent-styles';
+        style.textContent = `
+            @keyframes llm-pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
+            #llm-pulse-dot { animation: llm-pulse 1.8s ease-in-out infinite; }
+            #llm-pulse-dot.idle { color:#4ade80; }
+            #llm-pulse-dot.busy { color:#60a5fa; animation: llm-pulse 0.9s ease-in-out infinite; }
+            #llm-pulse-dot.error { color:#f87171; animation:none; }
+            #llm-pulse-dot.done  { color:#4ade80; animation:none; }
+            .llm-task-row { display:flex; align-items:flex-start; gap:8px; padding:5px 0;
+                font-size:12px; color:#94a3b8;
+                border-bottom:1px solid rgba(255,255,255,0.06); }
+            .llm-task-row:last-child { border-bottom:none; }
+            .llm-task-row.active { color:#fbbf24; }
+            .llm-task-row.done   { color:#4ade80; }
+            .llm-task-icon { width:14px; text-align:center; flex-shrink:0; font-size:11px; margin-top:1px; }
+            #btn-tasks:hover, #btn-llm-stop:hover { opacity:0.8; }
+        `;
+        document.head.appendChild(style);
+    }
+
     const wrapper = document.createElement('div');
     wrapper.id = 'llm-agent-wrapper';
     Object.assign(wrapper.style, {
-        position: 'fixed', top: '10px', left: '50%', transform: 'translateX(-50%)',
-        width: '650px', maxWidth: '95%', zIndex: '2147483647',
-        fontFamily: 'system-ui, sans-serif', transition: 'all 0.3s ease',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.15)', borderRadius: '8px', overflow: 'hidden',
-        backgroundColor: 'rgba(255, 255, 255, 0.98)', border: '1px solid #e2e8f0'
+        position: 'fixed', top: '12px', left: '50%', transform: 'translateX(-50%)',
+        zIndex: '2147483647', fontFamily: 'system-ui, -apple-system, sans-serif',
+        borderRadius: '10px', overflow: 'hidden',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
+        minWidth: '380px', maxWidth: '90vw'
     });
 
-    const header = document.createElement('div');
-    header.id = 'llm-banner-header';
-    header.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; border-bottom: 1px solid transparent;" id="llm-header-inner">
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <strong style="color: #ff4757; font-size: 15px; display: flex; align-items: center; gap: 6px;">
-                    <span id="llm-status-icon">🤖</span> <span id="llm-title-text">Agent Active</span>
-                </strong>
-            </div>
-            <div id="llm-stats-container" style="display: flex; gap: 15px; font-size: 12px; color: #475569;">
-                <div>🔍 <span id="agent-stat-searched">Waiting...</span></div>
-                <div>⚡ <span id="agent-stat-tried">-</span></div>
-                <div style="color:#d97706; font-weight:bold;">🪙 <span id="agent-stat-tokens">0</span></div>
-            </div>
-            <div style="display: flex; gap: 5px; align-items: center;">
-                <button id="btn-copy-logs" style="background:#f1f5f9; border:1px solid #cbd5e1; cursor:pointer; font-size:11px; padding:3px 8px; border-radius:4px; color:#334155; font-weight:bold; margin-right:8px;" title="Copy entire log to clipboard">📄 Copy Logs</button>
-                <button id="btn-stop" style="background:#fee2e2; border:1px solid #ef4444; cursor:pointer; font-size:11px; padding:3px 8px; border-radius:4px; color:#b91c1c; font-weight:bold; margin-right:8px;" title="Emergency Stop">🛑 STOP</button>
-                <button id="btn-minimize" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px;color:#64748b;" title="Minimize">_</button>
-                <button id="btn-normal" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px;color:#64748b;display:none;" title="Normal">🔲</button>
-                <button id="btn-expand" style="background:none;border:none;cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px;color:#64748b;" title="Expand">⛶</button>
-            </div>
+    // --- Header row (always visible) ---
+    wrapper.innerHTML = `
+        <div id="llm-banner-header" style="display:flex;align-items:center;gap:8px;padding:8px 12px;
+            background:rgba(15,23,42,0.93);backdrop-filter:blur(10px);">
+            <span id="llm-pulse-dot" class="busy" style="font-size:9px;">●</span>
+            <span id="llm-status-text" style="color:#e2e8f0;font-size:12px;font-weight:500;flex:1;
+                white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Initializing…</span>
+            <span id="llm-iter-text" style="color:#475569;font-size:11px;flex-shrink:0;"></span>
+            <span id="llm-token-text" style="color:#f59e0b;font-size:11px;font-weight:600;
+                flex-shrink:0;margin-left:4px;">0 tkn</span>
+            <button id="btn-tasks" style="background:rgba(255,255,255,0.07);border:1px solid
+                rgba(255,255,255,0.13);color:#94a3b8;cursor:pointer;font-size:11px;
+                padding:3px 8px;border-radius:5px;white-space:nowrap;margin-left:4px;">▼ Tasks</button>
+            <button id="btn-llm-stop" style="background:rgba(239,68,68,0.18);border:1px solid
+                rgba(239,68,68,0.38);color:#fca5a5;cursor:pointer;font-size:11px;
+                padding:3px 8px;border-radius:5px;font-weight:600;white-space:nowrap;">■ Stop</button>
+        </div>
+        <div id="llm-tasks-panel" style="display:none;padding:10px 14px 8px;
+            background:rgba(15,23,42,0.88);backdrop-filter:blur(10px);
+            border-top:1px solid rgba(255,255,255,0.07);">
+            <div style="font-size:10px;color:#334155;text-transform:uppercase;
+                letter-spacing:0.06em;margin-bottom:6px;">Task Plan</div>
+            <div id="llm-task-list"></div>
         </div>
     `;
-    wrapper.appendChild(header);
-
-    const logContainer = document.createElement('div');
-    logContainer.id = 'llm-banner-logs';
-    Object.assign(logContainer.style, {
-        height: '0px', overflowY: 'auto', backgroundColor: '#f8fafc',
-        fontSize: '12px', color: '#334155', padding: '0px 15px',
-        transition: 'all 0.3s ease', boxSizing: 'border-box'
-    });
-    wrapper.appendChild(logContainer);
     document.body.appendChild(wrapper);
 
+    // Cursor
     agentCursor = document.createElement('div');
     agentCursor.id = 'llm-agent-cursor';
-    agentCursor.innerHTML = '🖱️';
+    agentCursor.textContent = '🖱️';
     Object.assign(agentCursor.style, {
         position: 'absolute', top: '-50px', left: '-50px', fontSize: '24px',
-        zIndex: '2147483647', pointerEvents: 'none', filter: 'drop-shadow(2px 4px 4px rgba(0,0,0,0.4))',
-        transition: 'top 0.6s cubic-bezier(0.25, 1, 0.5, 1), left 0.6s cubic-bezier(0.25, 1, 0.5, 1)'
+        zIndex: '2147483647', pointerEvents: 'none',
+        filter: 'drop-shadow(2px 4px 4px rgba(0,0,0,0.4))',
+        transition: 'top 0.6s cubic-bezier(0.25,1,0.5,1), left 0.6s cubic-bezier(0.25,1,0.5,1)'
     });
     document.body.appendChild(agentCursor);
 
-    // Event Listeners
-    document.getElementById('btn-stop').addEventListener('click', () => {
-        updateBannerStat('saw', 'Stopping...', 'User requested emergency stop.');
+    document.getElementById('btn-llm-stop').addEventListener('click', () => {
+        updateBannerStat('saw', '🛑 Stopping…');
         chrome.runtime.sendMessage({ action: 'stop_agent' });
     });
-    document.getElementById('btn-minimize').addEventListener('click', () => setBannerState('minimized'));
-    document.getElementById('btn-normal').addEventListener('click', () => setBannerState('normal'));
-    document.getElementById('btn-expand').addEventListener('click', () => setBannerState('expanded'));
-    
-    // NEW: Copy Logs functionality
-    document.getElementById('btn-copy-logs').addEventListener('click', (e) => {
-        const btn = e.target;
-        const originalText = btn.innerText;
-        const logLines = Array.from(document.getElementById('llm-banner-logs').children)
-                              .map(div => div.innerText.replace('📋 Copy', '').trim())
-                              .filter(text => text.length > 0)
-                              .reverse(); // Make chronological
-        
-        navigator.clipboard.writeText(logLines.join('\n')).then(() => {
-            btn.innerText = '✅ Copied!';
-            setTimeout(() => btn.innerText = originalText, 2000);
-        });
-    });
 
-    logContainer.addEventListener('click', async (e) => {
-        if (e.target.classList.contains('agent-copy-btn')) {
-            const btn = e.target;
-            const dataUrl = btn.getAttribute('data-img');
-            const originalText = btn.innerText;
-            try {
-                btn.innerText = '⏳ Copying...';
-                const img = new Image();
-                img.src = dataUrl;
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width; canvas.height = img.height;
-                    canvas.getContext('2d').drawImage(img, 0, 0);
-                    canvas.toBlob(async (blob) => {
-                        try {
-                            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-                            btn.innerText = '✅ Copied!'; btn.style.backgroundColor = '#10b981'; btn.style.color = 'white';
-                        } catch (err) { btn.innerText = '❌ Failed'; }
-                        setTimeout(() => { btn.innerText = originalText; btn.style.backgroundColor = 'rgba(255,255,255,0.9)'; btn.style.color = '#334155'; }, 2000);
-                    }, 'image/png');
-                };
-            } catch (err) { btn.innerText = '❌ Error'; }
-        }
+    let tasksOpen = false;
+    document.getElementById('btn-tasks').addEventListener('click', () => {
+        tasksOpen = !tasksOpen;
+        document.getElementById('llm-tasks-panel').style.display = tasksOpen ? 'block' : 'none';
+        document.getElementById('btn-tasks').textContent = tasksOpen ? '▲ Tasks' : '▼ Tasks';
     });
 }
 
-function setBannerState(state) {
-    bannerState = state;
-    const wrapper = document.getElementById('llm-agent-wrapper');
-    const logs = document.getElementById('llm-banner-logs');
-    document.getElementById('btn-minimize').style.display = 'inline-block';
-    document.getElementById('btn-normal').style.display = 'inline-block';
-    document.getElementById('btn-expand').style.display = 'inline-block';
+function updateBannerStat(statName, text) {
+    const statusEl  = document.getElementById('llm-status-text');
+    const pulseEl   = document.getElementById('llm-pulse-dot');
+    const iterEl    = document.getElementById('llm-iter-text');
+    const tokenEl   = document.getElementById('llm-token-text');
 
-    if (state === 'minimized') {
-        wrapper.style.width = 'auto'; document.getElementById('llm-stats-container').style.display = 'none';
-        logs.style.height = '0px'; logs.style.padding = '0px 15px'; document.getElementById('btn-minimize').style.display = 'none';
-    } else if (state === 'normal') {
-        wrapper.style.width = '650px'; document.getElementById('llm-stats-container').style.display = 'flex';
-        logs.style.height = '0px'; logs.style.padding = '0px 15px'; document.getElementById('btn-normal').style.display = 'none';
-    } else if (state === 'expanded') {
-        wrapper.style.width = '650px'; document.getElementById('llm-stats-container').style.display = 'flex';
-        logs.style.height = '300px'; logs.style.padding = '10px 15px'; document.getElementById('btn-expand').style.display = 'none';
+    if (statName === 'tokens') {
+        if (tokenEl) tokenEl.textContent = `${text} tkn`;
+        return;
     }
-}
 
-function updateBannerStat(statName, text, logMessage = null, screenshotUrl = null) {
-    const el = document.getElementById(`agent-stat-${statName}`);
-    if (el) el.innerText = text;
-    
-    if (logMessage) {
-        const logContainer = document.getElementById('llm-banner-logs');
-        if (logContainer) {
-            const entry = document.createElement('div');
-            entry.style.marginBottom = '12px'; entry.style.paddingBottom = '8px'; entry.style.borderBottom = '1px solid #e2e8f0';
-            let contentHtml = `<span style="color:#94a3b8;">[${new Date().toLocaleTimeString()}]</span> <b>${logMessage}</b>`;
-            if (screenshotUrl) {
-                contentHtml += `<div style="position: relative; display: inline-block; margin-top: 8px;">
-                    <img src="${screenshotUrl}" style="max-width: 250px; max-height: 150px; border-radius: 4px; border: 1px solid #cbd5e1; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <button class="agent-copy-btn" data-img="${screenshotUrl}" style="position: absolute; top: 5px; right: 5px; background: rgba(255,255,255,0.9); border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; color: #334155; box-shadow: 0 1px 2px rgba(0,0,0,0.2);">📋 Copy</button>
-                </div>`;
-            }
-            entry.innerHTML = contentHtml;
-            logContainer.prepend(entry); 
+    // All other stat names update the main status line
+    if (statusEl) statusEl.textContent = text;
+
+    // Update iteration counter when 'searched' stat carries iter info
+    if (statName === 'searched' && iterEl) {
+        const match = text.match(/(\d+\/\d+)/);
+        iterEl.textContent = match ? match[1] : '';
+    }
+
+    // Update pulse dot class based on semantics
+    if (pulseEl) {
+        if (statName === 'saw') {
+            const t = text.toLowerCase();
+            if (t.includes('stop') || t.includes('error')) pulseEl.className = 'error';
+            else if (t.includes('achieved') || t.includes('done') || t.includes('✓')) pulseEl.className = 'done';
+            else pulseEl.className = 'busy';
         }
     }
 }
@@ -162,68 +132,23 @@ function animateCursorTo(element) {
     agentCursor.style.left = `${rect.left + window.scrollX + (rect.width / 2) - 12}px`;
 }
 
-// const INTERACTIVE_SELECTORS = ['button', 'a[href]', 'input:not([type="hidden"])', 'select', 'textarea', '[role="button"]', '[role="link"]', '[tabindex]:not([tabindex="-1"])'];
-
-function extractInteractiveElements() {
-    const rawElements = document.querySelectorAll(INTERACTIVE_SELECTORS.join(', '));
-    const simplifiedDom = [];
-    let elementCounter = 0;
-    document.querySelectorAll('.agent-id-cleanup').forEach(el => el.remove());
-
-    rawElements.forEach((el) => {
-        const style = window.getComputedStyle(el);
-        if (style.display === 'none' || style.visibility === 'hidden' || el.offsetWidth === 0 || el.offsetHeight === 0) return;
-
-        const id = elementCounter++;
-        el.setAttribute('data-agent-id', id);
-
-        let textContext = '';
-        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-            const baseName = el.placeholder || el.name || el.type || 'input field';
-            textContext = el.value ? `${baseName} (Current value: ${el.value})` : baseName;
-        } 
-        // --- NEW: Specifically handle Dropdowns ---
-        else if (el.tagName === 'SELECT') {
-            const options = Array.from(el.options).map(opt => `'${opt.text}' (value: '${opt.value}')`).join(', ');
-            textContext = `Dropdown Options: [${options}] | Current Selection: '${el.value}'`;
-        } 
-        else {
-            textContext = el.innerText?.trim() || el.getAttribute('aria-label') || el.title || '';
-        }
-        
-        textContext = textContext.substring(0, 150).replace(/\s+/g, ' ');
-
-        simplifiedDom.push({ id, tagName: el.tagName.toLowerCase(), type: el.type || '', text: textContext });
-        
-        const rect = el.getBoundingClientRect();
-        const badge = document.createElement('div');
-        badge.className = 'agent-id-badge agent-id-cleanup';
-        badge.innerText = id;
-        Object.assign(badge.style, {
-            position: 'absolute', backgroundColor: '#ff4757', color: 'white', fontSize: '10px',
-            fontFamily: 'monospace', fontWeight: 'bold', padding: '1px 3px', borderRadius: '3px',
-            zIndex: '2147483646', pointerEvents: 'none', top: `${rect.top + window.scrollY}px`, left: `${rect.left + window.scrollX}px`
-        });
-        document.body.appendChild(badge);
-    });
-    return simplifiedDom;
-}
+// Dead copy of extractInteractiveElements removed — real version defined below.
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     injectAgentUI();
+
     if (request.action === 'extract_dom') {
         sendResponse({ success: true, dom: extractInteractiveElements() });
-    } 
-    else if (request.action === 'execute_action') {
+
+    } else if (request.action === 'execute_action') {
         const targetEl = document.querySelector(`[data-agent-id="${request.target_id}"]`);
-        if (!targetEl) { sendResponse({ success: false, error: "Element not found" }); return true; }
-        
+        if (!targetEl) { sendResponse({ success: false, error: 'Element not found' }); return true; }
         animateCursorTo(targetEl);
         setTimeout(() => {
             try {
                 if (request.type === 'click') targetEl.click();
                 else if (request.type === 'type') {
-                    targetEl.focus(); 
+                    targetEl.focus();
                     targetEl.value = request.value;
                     targetEl.dispatchEvent(new Event('input', { bubbles: true }));
                     targetEl.dispatchEvent(new Event('change', { bubbles: true }));
@@ -231,10 +156,50 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 sendResponse({ success: true });
             } catch (error) { sendResponse({ success: false, error: error.message }); }
         }, 600);
-        return true; 
-    }
-    else if (request.action === 'update_status') {
-        updateBannerStat(request.statName, request.text, request.logMessage, request.screenshotUrl);
+        return true;
+
+    } else if (request.action === 'update_status') {
+        updateBannerStat(request.statName, request.text);
+        sendResponse({ success: true });
+
+    } else if (request.action === 'set_tasks') {
+        // Populate task checklist and auto-open panel
+        const list = document.getElementById('llm-task-list');
+        if (list && Array.isArray(request.tasks)) {
+            _taskCount = request.tasks.length;
+            _currentTask = 0;
+            list.innerHTML = '';
+            request.tasks.forEach((taskText, i) => {
+                const row = document.createElement('div');
+                row.className = 'llm-task-row' + (i === 0 ? ' active' : '');
+                row.id = `llm-task-${i}`;
+                const icon = document.createElement('span');
+                icon.className = 'llm-task-icon';
+                icon.textContent = i === 0 ? '⏳' : '○';
+                const label = document.createElement('span');
+                label.textContent = taskText;
+                row.appendChild(icon); row.appendChild(label);
+                list.appendChild(row);
+            });
+            // Auto-open tasks panel
+            document.getElementById('llm-tasks-panel').style.display = 'block';
+            document.getElementById('btn-tasks').textContent = '▲ Tasks';
+        }
+        sendResponse({ success: true });
+
+    } else if (request.action === 'tick_task') {
+        // Mark current active step done, advance to next
+        const doneRow = document.getElementById(`llm-task-${request.index}`);
+        if (doneRow) {
+            doneRow.classList.remove('active');
+            doneRow.classList.add('done');
+            doneRow.querySelector('.llm-task-icon').textContent = '✓';
+        }
+        const nextRow = document.getElementById(`llm-task-${request.index + 1}`);
+        if (nextRow) {
+            nextRow.classList.add('active');
+            nextRow.querySelector('.llm-task-icon').textContent = '⏳';
+        }
         sendResponse({ success: true });
     }
 });
@@ -284,6 +249,9 @@ function extractInteractiveElements() {
             rect.top < -100 // Hidden way scrolled up
         ) return;
 
+        // PERF: skip elements entirely outside the current viewport (below fold)
+        if (rect.top > window.innerHeight + 200) return;
+
         const id = elementCounter++;
         el.setAttribute('data-agent-id', id);
 
@@ -306,8 +274,8 @@ function extractInteractiveElements() {
         // Clean up text
         textContext = textContext.substring(0, 150).replace(/\s+/g, ' ');
 
-        // If we still have no text, and it's not a recognizable input, it might be a useless icon. Skip.
-        if (!textContext && el.tagName !== 'INPUT') return;
+        // If we still have no text, and it's not a form field, it might be a useless icon. Skip.
+        if (!textContext && !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
 
         simplifiedDom.push({ 
             id, 
@@ -329,5 +297,12 @@ function extractInteractiveElements() {
         document.body.appendChild(badge);
     });
     
-    return simplifiedDom;
+    // PERF: deduplicate elements with identical tag+text to cut LLM token usage
+    const seen = new Set();
+    return simplifiedDom.filter(el => {
+        const key = `${el.tagName}:${el.text.substring(0, 40)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
 }

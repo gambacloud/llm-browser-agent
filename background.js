@@ -158,12 +158,69 @@ async function callLLMAPI(tabId, userPrompt, domElements, actionHistory, config)
                 throw new Error("Gemini returned invalid JSON structure.");
             }
         }
+        throw new Error("Gemini: max retries exceeded without success.");
     }
 }
 
-// --- HELPER FUNCTIONS (Unchanged logic) ---
+// --- TASK PLANNER: one upfront LLM call to build a step list ---
+async function planTasks(prompt, config) {
+    const sys = 'You are a task planner for a browser agent. Return ONLY a JSON object {"tasks":[...]} with 3-5 short step strings (max 7 words each). No markdown.';
+    const usr = `Goal: "${prompt}"`;
+    try {
+        if (config.provider === 'ollama') {
+            const res = await fetch(`${config.ollamaUrl}/api/chat`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: config.ollamaModel, format: 'json', stream: false,
+                    messages: [{ role: 'system', content: sys }, { role: 'user', content: usr }] })
+            });
+            if (!res.ok) return null;
+            const d = await res.json();
+            return JSON.parse(d.message.content).tasks || null;
+        } else if (config.provider === 'groq') {
+            const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.groqApiKey}` },
+                body: JSON.stringify({ model: 'llama-3.3-70b-versatile', response_format: { type: 'json_object' },
+                    messages: [{ role: 'system', content: sys }, { role: 'user', content: usr }] })
+            });
+            if (!res.ok) return null;
+            const d = await res.json();
+            return JSON.parse(d.choices[0].message.content).tasks || null;
+        } else if (config.provider === 'gemini') {
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${config.apiKey}`;
+            const res = await fetch(apiUrl, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    systemInstruction: { parts: [{ text: sys }] },
+                    contents: [{ role: 'user', parts: [{ text: usr }] }],
+                    generationConfig: { responseMimeType: 'application/json' }
+                })
+            });
+            if (!res.ok) return null;
+            const d = await res.json();
+            return JSON.parse(d.candidates[0].content.parts[0].text.trim()).tasks || null;
+        }
+    } catch { return null; } // Never block the agent if planning fails
+}
+
+// --- JS DONE CHECK: skip LLM if page already matches goal keywords ---
+async function isGoalLikelyAchieved(prompt, tabId) {
+    try {
+        const tab = await chrome.tabs.get(tabId);
+        const keywords = (prompt.toLowerCase().match(/\b\w{4,}\b/g) || []);
+        if (keywords.length === 0) return false;
+        const haystack = ((tab.title || '') + ' ' + (tab.url || '')).toLowerCase();
+        const hits = keywords.filter(kw => haystack.includes(kw)).length;
+        return hits >= Math.ceil(keywords.length * 0.65);
+    } catch { return false; }
+}
+
+// --- HELPER FUNCTIONS ---
 async function sendUIUpdate(tabId, statName, text, logMessage = null, screenshotUrl = null) {
+    // 1. Update banner on the agent tab
     try { await chrome.tabs.sendMessage(tabId, { action: 'update_status', statName, text, logMessage, screenshotUrl }); } catch (e) {}
+    // 2. Broadcast live status to dashboard (and any other extension pages)
+    try { chrome.runtime.sendMessage({ action: 'agent_update', tabId, statName, text }); } catch (e) {}
 }
 
 async function getDomWithRetry(tabId, retries = 5) {
@@ -192,11 +249,19 @@ async function captureAuditScreenshot() {
 // --- MAIN LOOP ---
 async function runAgentLoop(tabId, prompt, config) {
     let currentIteration = 1;
-    let actionHistory = []; 
-    let sessionTotalTokens = 0; 
-    
-    stopRequests.delete(tabId); 
+    let actionHistory = [];
+    let sessionTotalTokens = 0;
+    let tasks = null; // task list from planner
+
+    stopRequests.delete(tabId);
     console.log(`[Background] Starting loop for tab ${tabId} using ${config.provider}`);
+
+    // --- Plan tasks upfront (one LLM call before the loop) ---
+    await sendUIUpdate(tabId, 'saw', 'Planning tasks…');
+    tasks = await planTasks(prompt, config);
+    if (tasks && tasks.length > 0) {
+        try { await chrome.tabs.sendMessage(tabId, { action: 'set_tasks', tasks }); } catch {}
+    }
 
     while (currentIteration <= MAX_ITERATIONS) {
         if (stopRequests.has(tabId)) {
@@ -204,35 +269,55 @@ async function runAgentLoop(tabId, prompt, config) {
             break;
         }
 
-        await sendUIUpdate(tabId, 'searched', `Scanning... (Iter ${currentIteration})`, `Started iteration ${currentIteration}`);
-        
+        await sendUIUpdate(tabId, 'searched', `Scanning… (${currentIteration}/${MAX_ITERATIONS})`, `Started iteration ${currentIteration}`);
+
         const domResponse = await getDomWithRetry(tabId);
         if (!domResponse) return;
 
-        await sendUIUpdate(tabId, 'saw', `Thinking...`, `Found ${domResponse.dom.length} elements, asking ${config.provider}...`);
-        
+        // --- JS done check before spending an LLM call ---
+        if (await isGoalLikelyAchieved(prompt, tabId)) {
+            await sendUIUpdate(tabId, 'saw', '✓ Goal Achieved!', 'JS done-check: goal keywords matched page — skipping LLM.');
+            return;
+        }
+
+        await sendUIUpdate(tabId, 'saw', `Thinking…`, `Found ${domResponse.dom.length} elements, asking ${config.provider}…`);
+
         try {
-            // UPDATED: Pass the config object to the API router
-            const apiResult = await callLLMAPI(tabId, prompt, domResponse.dom, actionHistory, config);
+            // Cap history sent to LLM at last 10 actions to avoid bloating the prompt
+            const recentHistory = actionHistory.slice(-10);
+            const apiResult = await callLLMAPI(tabId, prompt, domResponse.dom, recentHistory, config);
             const decision = apiResult.decision;
-            
+
             sessionTotalTokens += apiResult.tokensUsed;
             await sendUIUpdate(tabId, 'tokens', sessionTotalTokens.toLocaleString(), `Consumed ${apiResult.tokensUsed} tokens this iteration.`);
-            
+
             if (decision.action === 'done') {
-                await sendUIUpdate(tabId, 'saw', `Goal Achieved! 🎉`, `Agent concluded task successfully.`);
-                return; 
+                await sendUIUpdate(tabId, 'saw', '✓ Goal Achieved!', 'Agent concluded task successfully.');
+                // Tick remaining tasks to done
+                if (tasks) tasks.forEach((_, i) => {
+                    try { chrome.tabs.sendMessage(tabId, { action: 'tick_task', index: i }); } catch {}
+                });
+                return;
             }
 
             if (decision.action === 'navigate') {
-                const actionDesc = `Mapsd to ${decision.value}`;
+                // Validate URL before navigating — prevent javascript: or other unsafe protocols
+                let safeUrl;
+                try {
+                    const parsed = new URL(decision.value);
+                    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error();
+                    safeUrl = parsed.href;
+                } catch {
+                    throw new Error(`LLM returned invalid or unsafe URL: ${decision.value}`);
+                }
+                const actionDesc = `Navigated to ${safeUrl}`;
                 actionHistory.push(actionDesc);
                 const screenshotUrl = await captureAuditScreenshot();
-                await sendUIUpdate(tabId, 'tried', `Maps`, actionDesc, screenshotUrl);
-                chrome.tabs.update(tabId, { url: decision.value });
+                await sendUIUpdate(tabId, 'tried', `Navigate`, actionDesc, screenshotUrl);
+                chrome.tabs.update(tabId, { url: safeUrl });
                 await sleep(SLEEP_BETWEEN_ACTIONS_MS);
                 currentIteration++;
-                continue; 
+                continue;
             }
 
             let targetContext = "Unknown Element";
@@ -246,30 +331,34 @@ async function runAgentLoop(tabId, prompt, config) {
 
             const screenshotUrl = await captureAuditScreenshot();
             await sendUIUpdate(tabId, 'tried', decision.action.toUpperCase(), `Executing: ${actionDesc} ${decision.value ? `| Value: "${decision.value}"` : ''}`, screenshotUrl);
-            
+
             const execResponse = await new Promise(resolve => {
                 chrome.tabs.sendMessage(tabId, { action: 'execute_action', type: decision.action, target_id: decision.target_id, value: decision.value }, resolve);
             });
 
-            if (!execResponse || !execResponse.success) throw new Error("Execution failed on page.");
+            if (!execResponse || !execResponse.success) throw new Error('Execution failed on page.');
 
-            await sendUIUpdate(tabId, 'saw', `Waiting...`, `Action executed.`);
+            // Tick task checklist: map iteration index to task step
+            const taskIdx = Math.min(currentIteration - 1, (tasks?.length ?? 1) - 1);
+            try { await chrome.tabs.sendMessage(tabId, { action: 'tick_task', index: taskIdx }); } catch {}
+
+            await sendUIUpdate(tabId, 'saw', `Waiting…`, 'Action executed.');
             await sleep(SLEEP_BETWEEN_ACTIONS_MS);
             currentIteration++;
 
         } catch (error) {
-            if (error.message.includes("Stopped by user")) {
-                 await sendUIUpdate(tabId, 'saw', `🛑 Stopped`, `Execution aborted manually.`);
+            if (error.message.includes('Stopped by user')) {
+                await sendUIUpdate(tabId, 'saw', '🛑 Stopped', 'Execution aborted manually.');
             } else {
-                 await sendUIUpdate(tabId, 'saw', `Error`, `Critical Error: ${error.message}`);
-                 console.error(`[Agent Error Tab ${tabId}]`, error);
+                await sendUIUpdate(tabId, 'saw', `Error`, `Critical Error: ${error.message}`);
+                console.error(`[Agent Error Tab ${tabId}]`, error);
             }
-            return; 
+            return;
         }
     }
-    
+
     if (!stopRequests.has(tabId) && currentIteration > MAX_ITERATIONS) {
-        await sendUIUpdate(tabId, 'saw', `Stopped`, `Reached max limit of ${MAX_ITERATIONS}.`);
+        await sendUIUpdate(tabId, 'saw', `Max iterations reached`, `Stopped after ${MAX_ITERATIONS} steps.`);
     }
     stopRequests.delete(tabId);
 }

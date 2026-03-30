@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.local.set({ llmProvider: e.target.value });
     });
 
-    // Load saved settings
+    // Load saved settings & history on startup (single storage read)
     chrome.storage.local.get(['apiKey', 'groqApiKey', 'llmProvider', 'ollamaModel', 'ollamaUrl'], (result) => {
         if (result.apiKey) apiKeyInput.value = result.apiKey;
         if (result.groqApiKey) groqApiKeyInput.value = result.groqApiKey;
@@ -108,27 +108,8 @@ document.addEventListener('DOMContentLoaded', () => {
             llmProvider.value = result.llmProvider;
             llmProvider.dispatchEvent(new Event('change'));
         } else {
-            llmProvider.value = 'groq'; // Default to Groq for the demo
+            llmProvider.value = 'groq';
             llmProvider.dispatchEvent(new Event('change'));
-        }
-    });
-
-    // Save Groq key on blur
-    groqApiKeyInput.addEventListener('blur', () => chrome.storage.local.set({ groqApiKey: groqApiKeyInput.value.trim() }));
-
-    // Re-check Ollama if URL changes manually
-    ollamaUrlInput.addEventListener('blur', checkOllamaStatus);
-
-    // Load saved settings & history on startup
-    chrome.storage.local.get(['apiKey', 'llmProvider', 'ollamaModel', 'ollamaUrl'], (result) => {
-        if (result.apiKey) apiKeyInput.value = result.apiKey;
-        if (result.ollamaModel) ollamaModelInput.value = result.ollamaModel;
-        if (result.ollamaUrl) ollamaUrlInput.value = result.ollamaUrl;
-        if (result.llmProvider) {
-            llmProvider.value = result.llmProvider;
-            llmProvider.dispatchEvent(new Event('change'));
-        } else {
-            checkOllamaStatus(); // Check default if no settings
         }
     });
     renderHistory();
@@ -160,9 +141,10 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.tabs.create({ url: url, active: false }, (newTab) => {
             const row = document.createElement('tr');
             row.id = `row-${newTab.id}`;
+            const displayUrl = url.length > 30 ? url.substring(0, 30) + '...' : url;
             row.innerHTML = `
                 <td>#${newTab.id}</td>
-                <td style="font-size: 12px; color: #64748b;">${url.substring(0, 30)}...</td>
+                <td style="font-size: 12px; color: #64748b;">${displayUrl}</td>
                 <td>${prompt}</td>
                 <td><span style="font-size: 10px; background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">${config.provider.toUpperCase()}</span></td>
                 <td class="status-running" id="status-${newTab.id}">Initializing...</td>
@@ -190,9 +172,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.stopAgent = (tabId) => {
         chrome.runtime.sendMessage({ action: 'stop_agent', targetTabId: tabId });
-        document.getElementById(`status-${tabId}`).innerText = "🛑 Stopped";
-        document.getElementById(`status-${tabId}`).className = "status-failed";
+        const el = document.getElementById(`status-${tabId}`);
+        if (el) { el.textContent = '🛑 Stopped'; el.className = 'status-failed'; }
     };
 
     window.focusTab = (tabId) => chrome.tabs.update(tabId, { active: true });
-});
+
+    // --- Live status updates from the running agent loop ---
+    const STATUS_COLORS = {
+        searched: { color: '#3b82f6', bg: '#eff6ff' },
+        saw:      { color: '#7c3aed', bg: '#f5f3ff' },
+        tried:    { color: '#d97706', bg: '#fffbeb' },
+    };
+
+    chrome.runtime.onMessage.addListener((msg) => {
+        if (msg.action !== 'agent_update') return;
+        const cell = document.getElementById(`status-${msg.tabId}`);
+        if (!cell) return;
+
+        const t = (msg.text || '').toLowerCase();
+        if (t.includes('achieved') || t.includes('\u2713')) {
+            cell.textContent = '\u2713 Done'; cell.style.cssText = 'color:#10b981;background:#f0fdf4;font-weight:bold;';
+            cell.className = ''; return;
+        }
+        if (t.includes('stop') || t.includes('error')) {
+            cell.textContent = msg.text; cell.style.cssText = 'color:#ef4444;background:#fef2f2;font-weight:bold;';
+            cell.className = 'status-failed'; return;
+        }
+        if (msg.statName === 'tokens') return; // skip token-only updates
+
+        const scheme = STATUS_COLORS[msg.statName];
+        if (!scheme) return;
+        cell.textContent = msg.text;
+        cell.style.cssText = `color:${scheme.color};background:${scheme.bg};font-weight:bold;`;
+        cell.className = '';
+    });
+});
